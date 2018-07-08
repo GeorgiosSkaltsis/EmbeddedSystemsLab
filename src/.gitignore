@@ -1,0 +1,7 @@
+_build/
+.DS_store/
+.idea/
+.vscode/
+pc_terminal/pc-terminal
+*.pyc
+*.DSYM

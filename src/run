@@ -1,0 +1,123 @@
+#!/bin/sh
+
+###################################################################
+#                                                                 #
+#          Script for compiling and running the code              #
+#                                                                 #
+#   It has three possible modes (find, test and run):             #
+#    - find                             [./run find]              #
+#       Find connected serial devices                             # 
+#    - test                             [./run test]              #
+#       Run all the tests                                         #
+#    - run pc                           [./run <SERIAL> pc]       #
+#       Compile and run the pc-terminal                           #
+#    - run pc                           [./run <SERIAL> pc <JS>]  #
+#       Compile and run the pc-terminal                           #
+#    - run gui                          [./run <SERIAL> gui]      #
+#       Compile and run the gui                                   #
+#    - run drone                        [./run <SERIAL> drone]    #
+#       Compile and flash the drone                               #
+#    - run both                         [./run <SERIAL> all <JS>] #
+#       Compile and launch drone, pc-terminal and gui             #
+#                                                                 #
+#    Here <SERIAL> corresponds to the serial port to use          #
+#    and <JS> to the location of the joystick.                    #
+#    Append --drone when running on the actual drone hardware     #
+#                                                                 #
+#                                                                 #
+#                       Author: Chiel Bruin                       #
+#                                                                 #
+###################################################################
+
+
+if [ $# -eq 1 ] && [ "$1" = "find" ]
+  then
+    echo "Available serial ports:"
+    dmesg | grep tty
+    exit
+fi
+
+if [ $# -eq 1 ] && [ "$1" = "test" ]
+  then
+    make run-test
+    exit
+fi
+
+if [ $# -lt 2 ]
+  then
+    echo "Please specify the serial location and either 'pc', 'drone', 'gui' or 'all' for the build mode">&2
+fi
+
+if [ "$(id -u)" -eq 0 ]
+  then 
+    echo "You should not run this directly as root, this will protect your build folder.">&2
+    exit
+fi
+
+PORT=$1
+MODE=$2
+JS=$3
+
+for last; do true; done
+if [ "$last" = "--drone" ]
+  then
+    DRONE_CONNECTED="-DDRONE"
+else
+    DRONE_CONNECTED="-DBOARD"
+fi
+
+echo "Using mode" $MODE "on port" $PORT $DRONE_CONNECTED
+
+# Always run clean
+make clean
+
+# Flash first, as the pc-terminal is blocking
+if [ "$MODE" = "drone" ] || [ "$MODE" = "all" ]
+  then
+    make all "TRGT=$DRONE_CONNECTED" || exit
+    echo "Flashing the drone"
+    sudo python2 dfu_serial/serial_dfu.py _build/in4073.bin -p $PORT || exit
+fi
+
+if [ "$MODE" = "pc" ] || [ "$MODE" = "all" ]
+  then
+    # Build the PC-terminal
+    if [ "$JS" = "" ] || [ "$JS" = "--drone" ]
+      then
+      make pc "CFLAGS='-DGUI=true -DSERIAL_PORT=\\\"$PORT\\\" $DRONE_CONNECTED'" || exit      
+    else
+      echo "Using joystick on port" $JS
+      make pc "CFLAGS='-DGUI=true -DSERIAL_PORT=\\\"$PORT\\\" -DJS_DEV=\\\"'$JS'\\\" $DRONE_CONNECTED'" || exit
+    fi
+fi
+
+if [ "$MODE" = "gui" ] || [ "$MODE" = "all" ]
+  then
+    # Build the GUI
+    cd gui_client
+    mkdir _build
+    cd _build
+    if [ ! -f Makefile ]; 
+      then
+      cmake .. || exit
+    fi
+    make || exit
+    cd ../../
+fi
+
+if [ "$MODE" = "gui" ]
+  then
+    sudo gui_client/_build/gui_client
+fi
+
+if [ "$MODE" = "pc" ]
+  then
+    sudo pc_terminal/pc-terminal
+fi
+
+if [ "$MODE" = "all" ]
+  then
+    sudo gui_client/_build/gui_client &
+    sudo pc_terminal/pc-terminal
+fi
+
